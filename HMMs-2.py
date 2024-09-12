@@ -78,58 +78,44 @@ def viterbi_algorithm(A,B,pi,obs):
         maxs = []
         states_row = []
         for row in had_matrix:
-            max = -1
-            previous_states = []
-            for col, elem in enumerate(row):
-                if elem > max:
-                    max = elem
-                    previous_states = [col]
-                elif elem == max:
-                    previous_states.append(col)
-            maxs.append(max)
-            states_row.append(previous_states)
+            max_state = max(row)
+            previous_state = row.index(max_state)
+            maxs.append(max_state)
+            states_row.append(previous_state)
         states.append(states_row)
 
         delta_now = hadamard_product(maxs, B_t[o])
         delta_past = delta_now
-    max = -1
-    last_states = []
-    for idx, elem in enumerate(delta_past):
-        if elem > max:
-            max = elem
-            last_states = [idx]
-        elif elem == max:
-            last_states.append(idx)
+    max_val = max(delta_past)
+    last_state = delta_past.index(max_val)
     num_rows_states = len(obs)-1
-    paths = backtrack(states, last_states[0], num_rows_states)
-    return paths
+    path = [last_state] + backtrack(states, last_state, num_rows_states-1)
+    path.reverse()
+    return path
 
 def backtrack(states, current_state, current_row):
     if current_row == -1:
         return []
     else:
         return [states[current_row][current_state]] + backtrack(states, states[current_row][current_state] , current_row-1)
-  
-def backtrack_branch(states, current_state, current_row):
-    if current_row == 0:
-        return current_state
-    else:
-        paths = []
-        previous_states = states[current_row][current_state]
-        for state in previous_states:
-            paths.append(backtrack_branch(states, state, current_row-1) + [current_state])
-        return paths
+    
+def manage_output(res):
+    output = str(res[0])
+    for elem in res[1:]:
+        output += " " + str(elem)
+    return output
 
-
-matrix = [[[1],[0],[0]],[[0],[1],[2]],[[1],[2],[1]]]
+"""
+matrix = [[1,0,0],[0,1,2],[1,2,1]]
 current_state = 2
 current_row = 2
-path = backtrack_branch(matrix, current_state, current_row)
+path = backtrack(matrix, current_state, current_row)
 print(path)
+"""
 
-# [A, B, pi], obs = manage_input()
-# path = viterbi_algorithm(A,B,pi,obs)
-# print(path)
+[A, B, pi], obs = manage_input()
+path = viterbi_algorithm(A,B,pi,obs)
+print(manage_output(path))
 
 
         
