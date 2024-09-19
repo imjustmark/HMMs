@@ -33,21 +33,24 @@ class PlayerControllerHMM(PlayerControllerHMMAbstract):
         self.current_fish = 0
         self.cs = None
         """
-        self.models = []
-        self.observation_steps = 110
-        self.max_iters = 100
-        self.threshold = 0.9
+        self.models = []    # Store the parameters of the models
+        self.guesses = []   # Store the species to guess using each model
+        self.correct_unused_indices = list(range(N_SPECIES))  # Store which species we haven't guessed yet
+        self.hmms_used_to_guess = []    # Stores the hmms used to guess each fish
+
+        # HYPERPARAMETERS
+        self.k = 3              # Threshold quality of predictions
+        self.max_iters = 10     # Number of iterations of model training (Baum-Welch)
+        self.num_states = 5     # Number of states of species' HMMs.
+
+        self.observation_steps = 100
+        self.current_fish = -1
         self.observations = []
         self.observationsT = []
-        self.num_states = 5
-        self.current_fish = -1
-        self.percentage = 0.7
         self.train_probabilities = []
-        self.k = 5
-        self.guesses = []
-        self.used_hmm = {}
-
         self.probabilities = []
+
+        # self.num_guesses = 0
 
     def add_new_hmm(self):
         A = np.random.beta(2, 2, (self.num_states, self.num_states))
@@ -59,28 +62,22 @@ class PlayerControllerHMM(PlayerControllerHMMAbstract):
         B = (B / sum_B[:,np.newaxis]).tolist()
         sum_pi = np.sum(pi, axis=1)
         pi = (pi / sum_pi[:,np.newaxis]).tolist()
-        self.models.append([A, B, pi])
-        self.guesses.append(len(self.models)-1)
 
-    def avg_threshold(self, scores, percentage):
-        if len(scores) == 1:
-            return None
-        avg = np.average([x for x in scores if x != -np.inf])
-        candidates = []
-        threshold = percentage * avg
-        for elem in scores:
-            if elem > avg - threshold:
-                candidates.append(elem)
-        if len(candidates) > 0:
-            return scores.index(max(candidates))
+        A, B, pi, train_cs, iters = baum_welch(self.max_iters, A, B, pi, self.observationsT[self.current_fish])
+        train_prob = compute_probability(train_cs)
+        self.models.append((A,B,pi,train_prob))
+        if len(self.correct_unused_indices) == 0:
+            self.guesses.append(self.guesses[self.idx_max])
         else:
-            return None
+            self.guesses.append(self.correct_unused_indices.pop())
         
     def ref_threshold(self, scores, k):
         candidates = []
-        for idx, elem in enumerate(scores):
-            if elem > k * self.train_probabilities[idx]:
-                candidates.append(elem)
+        for idx, hmm in enumerate(self.models):
+            # eprint("Reference: " + str(hmm[3]))
+            # eprint("Probability: " + str(scores[idx]))
+            if scores[idx] > k * hmm[3]:
+                candidates.append(scores[idx])
         if len(candidates) > 0:
             return scores.index(max(candidates))
         else:
@@ -111,11 +108,12 @@ class PlayerControllerHMM(PlayerControllerHMMAbstract):
             self.observations.append(observations)
         else:
             self.current_fish += 1
+            eprint("Step: " + str(step) + " Guesses: " + str(self.num_guesses))
             if step == self.observation_steps:
                 self.observationsT = transpose(self.observations)
             current_obs = self.observationsT[self.current_fish]
             max_prob = -1000000
-            idx_max = -1
+            self.idx_max = -1
             probs = []
             for idx, hmm in enumerate(self.models):
                 _, cs, correct = forward_algorithm(hmm[0], hmm[1], hmm[2], current_obs)
@@ -123,30 +121,23 @@ class PlayerControllerHMM(PlayerControllerHMMAbstract):
                     probability = compute_probability(cs)
                 else:
                     probability = -np.inf
-                #probability = sum(alphas[-1])/cs[-1]
                 probs.append(probability)
                 if probability > max_prob:
                     max_prob = probability
-                    idx_max = idx
-            idx_candidate = self.ref_threshold(probs, self.k)
-            eprint(probs)
-            if idx_candidate is not None:
-                eprint('Suited! ' + str(idx_candidate))
-                self.used_hmm[self.current_fish] = idx_candidate
-                return (self.current_fish, idx_candidate)
-            elif len(self.models) < N_SPECIES:
-                self.add_new_hmm()
-                self.models[-1][0], self.models[-1][1], self.models[-1][2], train_cs, iters = baum_welch(self.max_iters, self.models[-1][0], self.models[-1][1], self.models[-1][2], self.observationsT[self.current_fish])
-                train_prob = compute_probability(train_cs)
-                eprint(train_prob)
-                self.train_probabilities.append(train_prob)
-                eprint('New Model! ' + str(len(self.models)) + " , Trained for: " + str(iters) + " iterations.")
-                self.used_hmm[self.current_fish] = len(self.models)
-                return (self.current_fish, len(self.models))
+                    self.idx_max = idx
+            candidate_idx = self.ref_threshold(probs, self.k)
+
+            if candidate_idx is not None:
+                # eprint('Suited! ' + str(self.guesses[candidate_idx]))
+                self.hmms_used_to_guess.append((candidate_idx, True))
+                self.num_guesses += 1
+                return (self.current_fish, self.guesses[candidate_idx])
             else:
-                eprint('Well, I guess...' + str(idx_max))
-                self.used_hmm[self.current_fish] = idx_max
-                return (self.current_fish, idx_max)
+                self.add_new_hmm()
+                self.hmms_used_to_guess.append((len(self.models)-1, False))
+                # eprint('New Model! ' + str(self.guesses[-1]))
+                self.num_guesses += 1
+                return (self.current_fish, self.guesses[-1])
                 
     def reveal(self, correct, fish_id, true_type):
         """
@@ -158,6 +149,12 @@ class PlayerControllerHMM(PlayerControllerHMMAbstract):
         :param true_type: the correct type of the fish
         :return:
         """
-        eprint(true_type)
-        #self.guesses[] = true_type
-        pass
+        hmm_used, suited = self.hmms_used_to_guess[-1]
+        # eprint(true_type)
+        if suited and not correct:
+            self.add_new_hmm()
+            # eprint("Oh, we were wrong...")
+            self.guesses[-1] = true_type
+        elif not suited:
+            self.guesses[hmm_used] = true_type
+        
